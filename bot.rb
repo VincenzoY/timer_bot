@@ -6,6 +6,7 @@ require 'sqlite3'
 require 'dotenv/load'
 
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: '-'
+@update_time = 60
 
 # Invite url
 
@@ -19,19 +20,32 @@ puts 'Click on it to invite it to your server.'
 end
 
 @bot.command :addtimer do |event, name, *args|
+    permissions(event)
     return event.respond "Please input a name" if name == nil
     return event.respond "Please input a time" if args == []
     time = convert(args)
     return time unless time.is_a? Integer
     add_to_database(name, time)
+    event.respond "Created Timer Successfully."
     track(event)
 end
 
 @bot.command :track do |event|
+    permissions(event)
+    event.respond "Bot is tracking."
+    track(event)
+end
+
+@bot.command :updatetime do |event, *args|
+    permissions(event)
+    time = convert(args)
+    return time unless time.is_a? Integer
+    @update_time = time - Time.now.to_i
     track(event)
 end
 
 @bot.command :deletetimer do |event, name|
+    permissions(event)
     begin
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ?", name)[0]["channelID"]
         Discordrb::API::Channel.delete("#{@bot.token}", channelID) if event.server.channels.find{ |i| i.id == channelID}
@@ -41,6 +55,8 @@ end
         event.respond "No such timer found"
     end
 end
+
+private
 
 # convert mins, hours, days to int
 
@@ -92,8 +108,20 @@ def track(event)
             @db.execute("UPDATE time SET channelID = ? WHERE timerName = ?", channel.id, row["timerName"])
         end
     end
-    sleep(60)
+    p @update_time
+    sleep(@update_time)
+    p "done"
     track(event)
+end
+
+def permissions(event)
+    if event.user.defined_permission?(:administrator)
+        return
+    else
+        event.respond "You do not have access to this bot."
+        sleep(@update_time)
+        track(event)
+    end
 end
 
 # database
