@@ -25,8 +25,7 @@ end
     return event.respond "Please input a time" if args == []
     time = convert(args)
     return time unless time.is_a? Integer
-    add_to_database(name, time)
-    event.respond "Created Timer Successfully."
+    event.respond add_to_database(event.server.id, name, time)
     track(event)
 end
 
@@ -47,9 +46,9 @@ end
 @bot.command :deletetimer do |event, name|
     permissions(event)
     begin
-        channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ?", name)[0]["channelID"]
+        channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ? AND serverID = ?", name, event.server.id)[0]["channelID"]
         Discordrb::API::Channel.delete("#{@bot.token}", channelID) if event.server.channels.find{ |i| i.id == channelID}
-        @db.execute "DELETE FROM time WHERE timerName=?", name
+        @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
         event.respond "Deleted Successfully"
     rescue => e
         event.respond "No such timer found"
@@ -99,9 +98,9 @@ def readable_time(event, time, name)
 end
 
 def track(event)
-    num = @db.execute("SELECT count(*) AS total FROM time")[0]["total"]
+    num = @db.execute("SELECT count(*) AS total FROM time WHERE serverID = #{event.server.id}")[0]["total"]
     num.times do |i|
-        @db.execute ("SELECT * FROM time LIMIT 1 OFFSET #{i}") do |row|
+        @db.execute ("SELECT * FROM time WHERE serverID = #{event.server.id} LIMIT 1 OFFSET #{i}") do |row|
             Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"]) if event.server.channels.find{ |i| i.id == "#{row["channelID"]}".to_i }
             channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2)
             Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
@@ -127,13 +126,16 @@ end
 # database
 @db = SQLite3::Database.open "timer.db"
 @db.results_as_hash = true
-@db.execute "CREATE TABLE IF NOT EXISTS time(timerName STRING, time INT, channelID INT)"
+@db.execute "CREATE TABLE IF NOT EXISTS time(serverID INT, timerName STRING, time INT, channelID INT)"
 
-def add_to_database(timerName, time)
-    if @db.execute("SELECT 1 FROM time WHERE timerName = ?", timerName).length > 0
+def add_to_database(serverID, timerName, time)
+    if @db.execute("SELECT 1 FROM time WHERE timerName = ? AND serverID = #{serverID}", timerName).length > 0
         return "That is already a timer"
+    elsif @db.execute("SELECT COUNT(serverID) FROM time WHERE serverID = #{serverID}").first["COUNT(serverID)"] >= 3
+        return "You have too many timers. Delete a different one first before adding another."
     else
-        @db.execute("INSERT INTO time (timerName, time) VALUES (?, ?)", timerName, time)
+        @db.execute("INSERT INTO time (serverID, timerName, time) VALUES (?, ?, ?)", serverID, timerName, time)
+        return "Created Timer Successfully."
     end
 end
 
