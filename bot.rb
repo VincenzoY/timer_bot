@@ -77,6 +77,7 @@ end
         @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id 
         category = event.server.create_channel(name = "Timer(s)", type = 4)
         Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, event.server.id, 0, 1048576, 'role')
+        Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.profile.id, 1048576, 0, 'member')
         category.position=(0)
         @category_db.execute("INSERT INTO category (serverID, categoryID) VALUES (?, ?)", event.server.id, category.id)
         event.respond "Organization is turned on."
@@ -146,6 +147,7 @@ def track_one(event, name)
         else
             channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2)
             Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
+            Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
         end
         channel = nil
         while channel == nil do 
@@ -166,6 +168,7 @@ def track(event)
             else
                 channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2)
                 Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
+                Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
             end
             channel = nil
             while channel == nil do 
