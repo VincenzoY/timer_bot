@@ -4,9 +4,10 @@ require 'discordrb'
 require 'sqlite3'
 require 'dotenv/load'
 
-@command = "-"
+@command = "["
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
 @update_time = 300
+@busy = false
 
 # Invite url
 
@@ -21,7 +22,8 @@ puts 'Click on it to invite it to your server.'
         embed.description = "Make Timers for your server. There is a max of three timers per server."
         embed.color = "0018a1"
         embed.thumbnail = Discordrb::Webhooks::EmbedThumbnail.new(url: @bot.profile.avatar_url)
-        fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer [timer name (cannot have spaces)] [{Some combination of (int)d (int)h (int)m (int)s}]\n Example: #{@command}addtimer Test 5d 4m 2s"}),
+        fields = [Discordrb::Webhooks::EmbedField.new({name: "Begin Tracking Timers", value: "#{@command}track"}),
+                    Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer [timer name (cannot have spaces)] [{Some combination of (int)d (int)h (int)m (int)s}]\n Example: #{@command}addtimer Test 5d 4m 2s"}),
                     Discordrb::Webhooks::EmbedField.new({name: "Delete a Timer", value: "#{@command}deletetimer [timer name (cannot have spaces)]"}),
                     Discordrb::Webhooks::EmbedField.new({name: "Organize Timers in a Category", value: "#{@command}organize [true/false]"})]
         embed.fields = fields
@@ -31,43 +33,69 @@ end
 
 @bot.command :addtimer do |event, name, *args|
     return "You do not have access to this bot." if permissions(event) == false
+    event.respond "Waiting on another process" if @track == true
+    while @track == true
+    end
     return event.respond "Please input a name" if name == nil
     return event.respond "Please input a time" if args == []
     time = convert(args)
     return time unless time.is_a? Integer
+    @busy = true
     response = add_to_database(event.server.id, name, time)
     track_one(event, name) if response == "Created Timer Successfully."
     return response
+    @busy = false
 end
 
 @bot.command :track do |event|
-    return "You do not have access to this command." if event.user.id != 322845778127224832
-    p "working"
-    event.respond "Bot is tracking."
+    return "You do not have access to this bot." if permissions(event) == false
+    event.respond "Waiting on another process" if @track == true
+    while @track == true
+    end
+    return "Already tracking" if @busy == true
+    @busy = true
+    event.respond "Bot is tracking. Please wait a moment for changes to update."
+    sleep(15)
+    @busy = false
     track(event)
 end
 
 @bot.command :updatetime do |event, *args|
     return "You do not have access to this command." if event.user.id != 322845778127224832
+    event.respond "Waiting on another process" if @track == true
+    while @track == true
+    end
+    @busy = true
     time = convert(args)
+    @busy = false
     return time unless time.is_a? Integer
     @update_time = time - Time.now.to_i
 end
 
 @bot.command :deletetimer do |event, name|
     return "You do not have access to this bot." if permissions(event) == false
+    event.respond "Waiting on another process" if @track == true
+    while @track == true
+    end
+    @busy = true
     begin
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ? AND serverID = ?", name, event.server.id)[0]["channelID"]
         Discordrb::API::Channel.delete("#{@bot.token}", channelID) if event.server.channels.find{ |i| i.id == channelID}
         @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
+        @busy = false
         event.respond "Deleted Successfully"
     rescue => e
+        @busy = false
         event.respond "No such timer found"
     end
 end
 
 @bot.command :organize do |event, boolean|
     return "You do not have access to this bot." if permissions(event) == false
+    event.respond "Waiting on another process" if @track == true
+    while @track == true
+    end
+    @busy = true
     if boolean == "true"
         begin
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = ?", event.server.id)[0]["categoryID"]
@@ -80,11 +108,12 @@ end
         Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.profile.id, 1048576, 0, 'member')
         category.position=(0)
         @category_db.execute("INSERT INTO category (serverID, categoryID) VALUES (?, ?)", event.server.id, category.id)
-        event.respond "Organization is turned on."
         @db.execute("SELECT * FROM time WHERE serverID = #{event.server.id}") do |row|
             Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"]) if event.server.channels.find{ |i| i.id == row["channelID"]}
             track_one(event, row["timerName"])
         end
+        @busy = false
+        event.respond "Organization is turned on."
     elsif boolean == "false"
         begin
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = ?", event.server.id)[0]["categoryID"]
@@ -92,8 +121,10 @@ end
         rescue
         end
         @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id 
+        @busy = false
         event.respond "Organization is turned off."
     else
+        @busy = false
         event.respond "Sorry that is not a valid command."
     end
 end
@@ -146,10 +177,9 @@ def track_one(event, name)
             Discordrb::API::Server.create_channel(token = @bot.token, server_id = event.server.id, name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0)
         else
             channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2)
-            Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
             Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
+            Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
         end
-        channel = nil
         while channel == nil do 
             channel = @bot.find_channel("#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", event.server.name).first
         end
@@ -158,6 +188,10 @@ def track_one(event, name)
 end
 
 def track(event)
+    event.respond "Waiting on another process" if @busy == true
+    while @busy == true
+    end
+    @track = true
     num = @db.execute("SELECT count(*) AS total FROM time WHERE serverID = #{event.server.id}")[0]["total"]
     num.times do |i|
         @db.execute ("SELECT * FROM time WHERE serverID = #{event.server.id} LIMIT 1 OFFSET #{i}") do |row|
@@ -167,22 +201,23 @@ def track(event)
                 Discordrb::API::Server.create_channel(token = @bot.token, server_id = event.server.id, name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0)
             else
                 channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", type = 2)
-                Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
                 Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
+                Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
             end
             channel = nil
             while channel == nil do 
                 channel = @bot.find_channel("#{row["timerName"]}: #{readable_time(event, row["time"], row["timerName"])}", event.server.name).first
             end
-            @db.execute("UPDATE time SET channelID = ? WHERE timerName = ?", channel.id, row["timerName"])
+            @db.execute("UPDATE time SET channelID = ? WHERE timerName = ? AND serverID = ?", channel.id, row["timerName"], event.server.id)
         end
     end
+    @track = false
     sleep(@update_time)
     track(event)
 end
 
 def permissions(event)
-    if event.user.defined_permission?(:administrator)
+    if event.user.permission?(:administrator)
         return true
     else
         return false
