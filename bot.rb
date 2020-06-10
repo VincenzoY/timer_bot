@@ -123,7 +123,7 @@ def permissions(event)
     end
 end
 
-# database
+# timer database
 @db = SQLite3::Database.open "timer.db"
 @db.results_as_hash = true
 @db.execute "CREATE TABLE IF NOT EXISTS time(serverID INT, timerName STRING, time INT, channelID INT)"
@@ -138,5 +138,10 @@ def add_to_database(serverID, timerName, time)
         return "Created Timer Successfully."
     end
 end
+
+# server category database
+# @category_db = SQLite3::Database.open "category.db"
+# @category_db.results_as_hash = true
+# @category_db.execute "CREATE TABLE IF NOT EXISTS category(serverID INT, categoryID INT)"
 
 @bot.run
