@@ -4,9 +4,11 @@ require 'discordrb'
 require 'sqlite3'
 require 'dotenv/load'
 
-@command = "-"
+@command = "["
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
 @update_time = 300
+@embed_color = "0018a1"
+@busy = false
 
 # Invite url
 
@@ -15,32 +17,56 @@ puts 'Click on it to invite it to your server.'
 
 # Commands
 
-@bot.ready() {
+@bot.ready() do
     track()
-}
+end
+
+@bot.server_delete() do |event|
+    @db.execute "DELETE FROM time WHERE serverID=?", event.server 
+    @category_db.execute "DELETE FROM category WHERE serverID=?", event.server 
+end
 
 @bot.command :help do |event|
     event.channel.send_embed do |embed|
         embed.title = "Commands"
-        embed.description = "Make Timers for your server. There is a max of three timers per server."
-        embed.color = "0018a1"
+        embed.description = "Make Timers for your server. There is a max of three timers per server. Timers automatically delete one hour after completing their countdown"
+        embed.color = "#{@embed_color}"
         embed.thumbnail = Discordrb::Webhooks::EmbedThumbnail.new(url: @bot.profile.avatar_url)
         fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer [timer name (cannot have spaces)] [{Some combination of (int)d (int)h (int)m (int)s}]\n Example: #{@command}addtimer Test 5d 4m 2s"}),
                     Discordrb::Webhooks::EmbedField.new({name: "Delete a Timer", value: "#{@command}deletetimer [timer name (cannot have spaces)]"}),
+                    Discordrb::Webhooks::EmbedField.new({name: "List all Timers", value: "#{@command}list"}),
                     Discordrb::Webhooks::EmbedField.new({name: "Organize Timers in a Category", value: "#{@command}organize [true/false]"})]
         embed.fields = fields
-        embed.footer = Discordrb::Webhooks::EmbedFooter.new(text: "Created by Vincent Y")
+        embed.footer = Discordrb::Webhooks::EmbedFooter.new(text: "Created by Vincenzo#3091")
+    end
+end
+
+@bot.command :list do |event|
+    list = @db.execute("SELECT timerName FROM time WHERE serverID = #{event.server.id}")
+    event.channel.send_embed do |embed|
+        embed.title = "Active Timers"
+        description = ""
+        list.each do |timer|
+            description += "#{timer["timerName"]}\n"
+        end
+        description = description[0..-2]
+        embed.description = description
+        embed.color = "#{@embed_color}"
+        embed.footer = Discordrb::Webhooks::EmbedFooter.new(text: "Created by Vincenzo#3091")
     end
 end
 
 @bot.command :addtimer do |event, name, *args|
     return "You do not have access to this bot." if permissions(event) == false
+    return "Bot is busy at the moment. Try again in a few seconds" if @busy == true
+    @busy = true
     return event.respond "Please input a name" if name == nil
     return event.respond "Please input a time" if args == []
     time = convert(args)
     return time unless time.is_a? Integer
     response = add_to_database(event.server.id, name, time)
     track_one(event, name) if response == "Created Timer Successfully."
+    @busy = false
     return response
 end
 
@@ -61,7 +87,7 @@ end
     return "You do not have access to this bot." if permissions(event) == false
     begin
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ? AND serverID = ?", name, event.server.id)[0]["channelID"]
-        Discordrb::API::Channel.delete("#{@bot.token}", channelID) if event.server.channels.find{ |i| i.id == channelID}
+        Discordrb::API::Channel.delete("#{@bot.token}", channelID)
         @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
         event.respond "Deleted Successfully"
     rescue => e

@@ -1,6 +1,6 @@
 source 'https://rubygems.org'
 
-gem 'discordrb'
+gem 'discordrb', git: 'https://github.com/discordrb/discordrb.git', branch: 'master'
 
 # Use Sql3 for database
 gem 'sqlite3', '~> 1.4', '>= 1.4.2'
