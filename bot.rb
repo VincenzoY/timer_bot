@@ -3,10 +3,11 @@
 require 'discordrb'
 require 'sqlite3'
 require 'dotenv/load'
+require 'rufus-scheduler'
 
-@command = "["
+@command = "-"
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
-@update_time = 300
+@update_time = 10
 @embed_color = "0018a1"
 @busy = false
 
@@ -14,6 +15,14 @@ require 'dotenv/load'
 
 puts "This bot's invite URL is #{@bot.invite_url}."
 puts 'Click on it to invite it to your server.'
+
+# scheduler
+
+scheduler = Rufus::Scheduler.new
+
+scheduler.every '10s' do
+    track()
+end
 
 # Commands
 
@@ -58,14 +67,22 @@ end
 
 @bot.command :addtimer do |event, name, *args|
     return "You do not have access to this bot." if permissions(event) == false
-    return "Bot is busy at the moment. Try again in a few seconds" if @busy == true
+    return "Bot is busy at the moment. Try again in a few minutes" if @busy == true
     @busy = true
-    return event.respond "Please input a name" if name == nil
-    return event.respond "Please input a time" if args == []
+    if name == nil
+        @busy = false
+        return event.respond "Please input a name"
+    elsif args == []
+        @busy = false
+        return event.respond "Please input a time"
+    end
     time = convert(args)
-    return time unless time.is_a? Integer
+    if !(time.is_a? Integer)
+        @busy = false
+        return time
+    end
     response = add_to_database(event.server.id, name, time)
-    track_one(event, name) if response == "Created Timer Successfully."
+    track() if response == "Created Timer Successfully."
     @busy = false
     return response
 end
@@ -148,6 +165,7 @@ def convert(args)
             return 'The command is invalid. Try again.'
         end
     end
+    return "That's too long" if interval > 157788000
     return Time.now.to_i + interval
 end
 
@@ -190,7 +208,7 @@ def track()
             begin
                 Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"])
             rescue
-                p "glitch"
+
             end
             if @category_db.execute("SELECT 1 FROM category WHERE serverID = #{row["serverID"]}").length > 0
                 categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{row["serverID"]}")[0]["categoryID"]
@@ -203,8 +221,6 @@ def track()
             @db.execute("UPDATE time SET channelID = ? WHERE timerName = ? AND serverID = ?", channel.id, row["timerName"], "#{row["serverID"]}".to_i)
         end
     end
-    sleep(@update_time)
-    track()
 end
 
 def permissions(event)
