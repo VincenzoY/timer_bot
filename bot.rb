@@ -5,7 +5,7 @@ require 'sqlite3'
 require 'dotenv/load'
 require 'rufus-scheduler'
 
-@command = "-"
+@command = "["
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
 @update_time = 10
 @embed_color = "0018a1"
@@ -20,7 +20,7 @@ puts 'Click on it to invite it to your server.'
 
 scheduler = Rufus::Scheduler.new
 
-scheduler.every '10s' do
+scheduler.every '5m' do
     track()
 end
 
@@ -67,7 +67,7 @@ end
 
 @bot.command :addtimer do |event, name, *args|
     return "You do not have access to this bot." if permissions(event) == false
-    return "Bot is busy at the moment. Try again in a few minutes" if @busy == true
+    return "Bot is busy at the moment. Try again in a few seconds" if @busy == true
     @busy = true
     if name == nil
         @busy = false
@@ -82,7 +82,7 @@ end
         return time
     end
     response = add_to_database(event.server.id, name, time)
-    track() if response == "Created Timer Successfully."
+    track_one(event, name) if response == "Created Timer Successfully."
     @busy = false
     return response
 end
@@ -114,6 +114,8 @@ end
 
 @bot.command :organize do |event, boolean|
     return "You do not have access to this bot." if permissions(event) == false
+    return "Bot is busy at the moment. Try again in a few seconds" if @busy == true
+    @busy = true
     if boolean == "true"
         begin
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = ?", event.server.id)[0]["categoryID"]
@@ -130,6 +132,7 @@ end
             Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"]) if event.server.channels.find{ |i| i.id == row["channelID"]}
             track_one(event, row["timerName"])
         end
+        @busy = false
         event.respond "Organization is turned on."
     elsif boolean == "false"
         begin
@@ -138,8 +141,10 @@ end
         rescue
         end
         @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id 
+        @busy = false
         event.respond "Organization is turned off."
     else
+        @busy = false
         event.respond "Sorry that is not a valid command."
     end
 end
@@ -197,7 +202,7 @@ def track_one(event, name)
         while channel == nil do 
             channel = @bot.find_channel("#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", event.server.name).first
         end
-        @db.execute("UPDATE time SET channelID = ? WHERE timerName = ?", channel.id, row["timerName"])
+        @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", row["timerName"], "#{row["serverID"]}".to_i)
     end
 end
 
@@ -208,7 +213,12 @@ def track()
             begin
                 Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"])
             rescue
-
+                begin
+                p "glitch"
+                Discordrb::API::Channel.delete("#{@bot.token}", @bot.find_channel(row["oldName"], @bot.server(row["serverID"]).name).first.id)
+                rescue
+                    p "very bad"
+                end
             end
             if @category_db.execute("SELECT 1 FROM category WHERE serverID = #{row["serverID"]}").length > 0
                 categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{row["serverID"]}")[0]["categoryID"]
@@ -218,7 +228,7 @@ def track()
                 Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
                 Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, "#{row["serverID"]}".to_i, 0, 1048576, 'role')
             end
-            @db.execute("UPDATE time SET channelID = ? WHERE timerName = ? AND serverID = ?", channel.id, row["timerName"], "#{row["serverID"]}".to_i)
+            @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", row["timerName"], "#{row["serverID"]}".to_i)
         end
     end
 end
@@ -234,7 +244,7 @@ end
 # timer database
 @db = SQLite3::Database.open "timer.db"
 @db.results_as_hash = true
-@db.execute "CREATE TABLE IF NOT EXISTS time(serverID INT, timerName STRING, time INT, channelID INT)"
+@db.execute "CREATE TABLE IF NOT EXISTS time(serverID INT, timerName STRING, time INT, channelID INT, oldName STRING)"
 
 def add_to_database(serverID, timerName, time)
     if @db.execute("SELECT 1 FROM time WHERE timerName = ? AND serverID = #{serverID}", timerName).length > 0
