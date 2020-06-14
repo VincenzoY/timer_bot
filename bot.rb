@@ -67,23 +67,17 @@ end
 
 @bot.command :addtimer do |event, name, *args|
     return "You do not have access to this bot." if permissions(event) == false
-    return "Bot is busy at the moment. Try again in a few seconds" if @busy == true
-    @busy = true
     if name == nil
-        @busy = false
         return event.respond "Please input a name"
     elsif args == []
-        @busy = false
         return event.respond "Please input a time"
     end
     time = convert(args)
     if !(time.is_a? Integer)
-        @busy = false
         return time
     end
     response = add_to_database(event.server.id, name, time)
-    track_one(event, name) if response == "Created Timer Successfully."
-    @busy = false
+    track() if response == "Created Timer Successfully."
     return response
 end
 
