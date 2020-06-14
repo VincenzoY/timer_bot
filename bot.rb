@@ -4,7 +4,7 @@ require 'discordrb'
 require 'sqlite3'
 require 'dotenv/load'
 
-@command = "-"
+@command = "["
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
 @update_time = 300
 @delete_time = -3600
@@ -18,7 +18,12 @@ puts 'Click on it to invite it to your server.'
 # Commands
 
 @bot.ready() do
-    Thread.new{ track() }
+    Thread.new do
+        loop do
+            track()
+            sleep(@update_time)
+        end
+    end
 end
 
 @bot.server_delete() do |event|
@@ -32,10 +37,10 @@ end
         embed.description = "Make Timers for your server. There is a max of three timers per server. Timers automatically delete one hour after completing their countdown"
         embed.color = "#{@embed_color}"
         embed.thumbnail = Discordrb::Webhooks::EmbedThumbnail.new(url: @bot.profile.avatar_url)
-        fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer [timer name (cannot have spaces)] [{Some combination of (int)d (int)h (int)m (int)s}]\n Example: #{@command}addtimer Test 5d 4m 2s"}),
-                    Discordrb::Webhooks::EmbedField.new({name: "Delete a Timer", value: "#{@command}deletetimer [timer name (cannot have spaces)]"}),
+        fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer (timer name {cannot have spaces}) ({Some combination of (int)d (int)h (int)m (int)s})\n Example: #{@command}addtimer Test_Timer 5d 4m 2s"}),
+                    Discordrb::Webhooks::EmbedField.new({name: "Delete a Timer", value: "#{@command}deletetimer {timer name (cannot have spaces)}"}),
                     Discordrb::Webhooks::EmbedField.new({name: "List all Timers", value: "#{@command}list"}),
-                    Discordrb::Webhooks::EmbedField.new({name: "Organize Timers in a Category", value: "#{@command}organize [true/false]"})]
+                    Discordrb::Webhooks::EmbedField.new({name: "Organize Timers in a Category", value: "#{@command}organize (true/false)"})]
         embed.fields = fields
         embed.footer = Discordrb::Webhooks::EmbedFooter.new(text: "Created by Vincenzo#3091")
     end
@@ -75,7 +80,12 @@ end
 @bot.command :track do |event|
     return "You do not have access to this command." if event.user.id != 322845778127224832
     event.respond "Bot is tracking. Please wait a moment for changes to update."
-    Thread.new{ track() }
+    Thread.new do
+        loop do
+            track()
+            sleep(@update_time)
+        end
+    end
 end
 
 @bot.command :updatetime do |event, *args|
@@ -238,8 +248,6 @@ def track()
             end
         end
     end
-    sleep(@update_time)
-    track()
 end
 
 def permissions(event)
