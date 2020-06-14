@@ -3,11 +3,11 @@
 require 'discordrb'
 require 'sqlite3'
 require 'dotenv/load'
+require 'rufus-scheduler'
 
-@command = "-"
+@command = "["
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
-@update_time = 300
-@delete_time = -3600
+@update_time = 10
 @embed_color = "0018a1"
 @busy = false
 
@@ -15,10 +15,19 @@ require 'dotenv/load'
 
 puts "This bot's invite URL is #{@bot.invite_url}."
 puts 'Click on it to invite it to your server.'
+
+# scheduler
+
+scheduler = Rufus::Scheduler.new
+
+scheduler.every '5m' do
+    track()
+end
+
 # Commands
 
 @bot.ready() do
-    Thread.new{ track() }
+    track()
 end
 
 @bot.server_delete() do |event|
@@ -68,14 +77,14 @@ end
         return time
     end
     response = add_to_database(event.server.id, name, time)
-    track_one(event, name) if response == "Created Timer Successfully."
+    track() if response == "Created Timer Successfully."
     return response
 end
 
 @bot.command :track do |event|
     return "You do not have access to this command." if event.user.id != 322845778127224832
     event.respond "Bot is tracking. Please wait a moment for changes to update."
-    Thread.new{ track() }
+    track()
 end
 
 @bot.command :updatetime do |event, *args|
@@ -85,21 +94,11 @@ end
     @update_time = time - Time.now.to_i
 end
 
-@bot.command :deletetime do |event, *args|
-    return "You do not have access to this command." if event.user.id != 322845778127224832
-    time = convert(args)
-    return time unless time.is_a? Integer
-    @deletetime = time - Time.now.to_i
-end
-
 @bot.command :deletetimer do |event, name|
     return "You do not have access to this bot." if permissions(event) == false
     begin
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ? AND serverID = ?", name, event.server.id)[0]["channelID"]
-        begin
         Discordrb::API::Channel.delete("#{@bot.token}", channelID)
-        rescue
-        end
         @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
         event.respond "Deleted Successfully"
     rescue => e
@@ -171,14 +170,10 @@ end
 
 def readable_time(time, name)
     time -= Time.now.to_i
-    if time <= @delete_time
+    if time < -3600
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ?", name)[0]["channelID"]
-        begin
-            Discordrb::API::Channel.delete("#{@bot.token}", channelID)
-        rescue
-        end
+        Discordrb::API::Channel.delete("#{@bot.token}", channelID)
         @db.execute "DELETE FROM time WHERE timerName=?", name
-        return "delete"
     elsif time < 0
         return "Finished"
     end
@@ -221,25 +216,15 @@ def track()
             end
             if @category_db.execute("SELECT 1 FROM category WHERE serverID = #{row["serverID"]}").length > 0
                 categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{row["serverID"]}")[0]["categoryID"]
-                readable_time = readable_time(row["time"], row["timerName"])
-                if readable_time != "delete"
-                    channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
-                end
+                channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
             else
-                readable_time = readable_time(row["time"], row["timerName"])
-                if readable_time != "delete"
-                    channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = nil, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
-                    Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
-                    Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, "#{row["serverID"]}".to_i, 0, 1048576, 'role')
-                end
+                channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = nil, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
+                Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
+                Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, "#{row["serverID"]}".to_i, 0, 1048576, 'role')
             end
-            if readable_time != "delete"
-                @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time}", row["timerName"], "#{row["serverID"]}".to_i)
-            end
+            @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", row["timerName"], "#{row["serverID"]}".to_i)
         end
     end
-    sleep(@update_time)
-    track()
 end
 
 def permissions(event)

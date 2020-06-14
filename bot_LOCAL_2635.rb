@@ -58,6 +58,7 @@ end
 
 @bot.command :addtimer do |event, name, *args|
     return "You do not have access to this bot." if permissions(event) == false
+    # return "Bot is busy at the moment. Try again in a few seconds" if @busy == true
     if name == nil
         return event.respond "Please input a name"
     elsif args == []
