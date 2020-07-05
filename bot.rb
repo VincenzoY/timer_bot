@@ -4,10 +4,10 @@ require 'discordrb'
 require 'sqlite3'
 require 'dotenv/load'
 
-@command = "["
+@command = "-"
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
-@update_time = 300
-@delete_time = -3600
+@update_time = 600
+@delete_time = 3600
 @embed_color = "0018a1"
 @busy = false
 
@@ -18,12 +18,7 @@ puts 'Click on it to invite it to your server.'
 # Commands
 
 @bot.ready() do
-    Thread.new do
-        loop do
-            track()
-            sleep(@update_time)
-        end
-    end
+    run()
 end
 
 @bot.server_delete() do |event|
@@ -80,12 +75,7 @@ end
 @bot.command :track do |event|
     return "You do not have access to this command." if event.user.id != 322845778127224832
     event.respond "Bot is tracking. Please wait a moment for changes to update."
-    Thread.new do
-        loop do
-            track()
-            sleep(@update_time)
-        end
-    end
+    run()
 end
 
 @bot.command :updatetime do |event, *args|
@@ -123,18 +113,27 @@ end
     @busy = true
     if boolean == "true"
         begin
+            # p "here"
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = ?", event.server.id)[0]["categoryID"]
-            Discordrb::API::Channel.delete("#{@bot.token}", categoryID) if event.server.channels.find{ |i| i.id == categoryID}
+            Discordrb::API::Channel.delete("#{@bot.token}", categoryID)
         rescue
+            # p "no"
         end
-        @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id 
+        @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id
         category = event.server.create_channel(name = "Timer(s)", type = 4)
         Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, event.server.id, 0, 1048576, 'role')
         Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.profile.id, 1048576, 0, 'member')
         category.position=(0)
         @category_db.execute("INSERT INTO category (serverID, categoryID) VALUES (?, ?)", event.server.id, category.id)
         @db.execute("SELECT * FROM time WHERE serverID = #{event.server.id}") do |row|
-            Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"]) if event.server.channels.find{ |i| i.id == row["channelID"]}
+            begin
+                Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"])
+            rescue
+                begin
+                    Discordrb::API::Channel.delete("#{@bot.token}", @bot.find_channel(row["oldName"], @bot.server(row["serverID"]).name).first.id)
+                rescue
+                end
+            end
             track_one(event, row["timerName"])
         end
         @busy = false
@@ -142,7 +141,7 @@ end
     elsif boolean == "false"
         begin
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = ?", event.server.id)[0]["categoryID"]
-            Discordrb::API::Channel.delete("#{@bot.token}", categoryID) if event.server.channels.find{ |i| i.id == categoryID}
+            Discordrb::API::Channel.delete("#{@bot.token}", categoryID)
         rescue
         end
         @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id 
@@ -181,7 +180,7 @@ end
 
 def readable_time(time, name)
     time -= Time.now.to_i
-    if time <= @delete_time
+    if time <= (@delete_time*-1)
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ?", name)[0]["channelID"]
         begin
             Discordrb::API::Channel.delete("#{@bot.token}", channelID)
@@ -223,29 +222,56 @@ def track()
                 Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"])
             rescue
                 begin
-                p "glitch"
+                # p "glitch"
                 Discordrb::API::Channel.delete("#{@bot.token}", @bot.find_channel(row["oldName"], @bot.server(row["serverID"]).name).first.id)
                 rescue
-                    p "very bad"
+                    # p "very bad"
                 end
             end
             if @category_db.execute("SELECT 1 FROM category WHERE serverID = #{row["serverID"]}").length > 0
                 categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{row["serverID"]}")[0]["categoryID"]
                 readable_time = readable_time(row["time"], row["timerName"])
                 if readable_time != "delete"
-                    channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
+                    begin
+                        channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
+                    rescue
+                        @category_db.execute "DELETE FROM category WHERE serverID=?", @bot.server(row["serverID"]).id
+                        category = @bot.server(row["serverID"]).create_channel(name = "Timer(s)", type = 4)
+                        Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.server(row["serverID"]).id, 0, 1048576, 'role')
+                        Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.profile.id, 1048576, 0, 'member')
+                        category.position=(0)
+                        @category_db.execute("INSERT INTO category (serverID, categoryID) VALUES (?, ?)", @bot.server(row["serverID"]).id, category.id)
+                        categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{row["serverID"]}")[0]["categoryID"]
+                        channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
+                    end
                 end
             else
                 readable_time = readable_time(row["time"], row["timerName"])
                 if readable_time != "delete"
-                    channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = nil, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
-                    Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
-                    Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, "#{row["serverID"]}".to_i, 0, 1048576, 'role')
+                    begin
+                        channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = nil, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
+                        Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
+                        Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, "#{row["serverID"]}".to_i, 0, 1048576, 'role')
+                    rescue
+                    end
                 end
             end
             if readable_time != "delete"
                 @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time}", row["timerName"], "#{row["serverID"]}".to_i)
             end
+        end
+    end
+end
+
+def run()
+    begin
+        @a.kill
+    rescue
+    end
+    @a = Thread.new do
+        loop do
+            track()
+            sleep(@update_time)
         end
     end
 end
