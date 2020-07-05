@@ -6,10 +6,11 @@ require 'dotenv/load'
 
 @command = "-"
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
-@update_time = 600
-@delete_time = 3600
+@update_time = 10
+@delete_time = 60
 @embed_color = "0018a1"
 @busy = false
+@invite = "https://discord.com/oauth2/authorize?client_id=356247887820357632&permissions=268435504&scope=bot"
 
 # Invite url
 
@@ -32,8 +33,8 @@ end
         embed.description = "Make Timers for your server. There is a max of three timers per server. Timers automatically delete one hour after completing their countdown"
         embed.color = "#{@embed_color}"
         embed.thumbnail = Discordrb::Webhooks::EmbedThumbnail.new(url: @bot.profile.avatar_url)
-        fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer (timer name {cannot have spaces}) ({Some combination of (int)d (int)h (int)m (int)s})\n Example: #{@command}addtimer Test_Timer 5d 4m 2s"}),
-                    Discordrb::Webhooks::EmbedField.new({name: "Delete a Timer", value: "#{@command}deletetimer {timer name (cannot have spaces)}"}),
+        fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer (timer name) (Some combination of (int)d (int)h (int)m (int)s)\n__The timer name must be one word but you can use underscores and they will be turned into spaces__.\nExample: #{@command}addtimer Test\_Timer 5d 4m 2s"}),
+                    Discordrb::Webhooks::EmbedField.new({name: "Delete a Timer", value: "#{@command}deletetimer (timer name)"}),
                     Discordrb::Webhooks::EmbedField.new({name: "List all Timers", value: "#{@command}list"}),
                     Discordrb::Webhooks::EmbedField.new({name: "Organize Timers in a Category", value: "#{@command}organize (true/false)"})]
         embed.fields = fields
@@ -57,25 +58,26 @@ end
 end
 
 @bot.command :addtimer do |event, name, *args|
-    return "You do not have access to this bot." if permissions(event) == false
-    if name == nil
-        return event.respond "Please input a name"
-    elsif args == []
-        return event.respond "Please input a time"
+    begin
+        return "You do not have access to this bot." if permissions(event) == false
+        if name == nil
+            event.respond "Please input a name"
+        elsif args == []
+            event.respond "Please input a time"
+        else
+            name = name.gsub(/_/, " ")
+            time = convert(args)
+            if !(time.is_a? Integer)
+                return time
+            end
+            response = add_to_database(event.server.id, name, time)
+            track_one(event, name) if response == "Created Timer Successfully."
+            event.respond response
+        end
+    rescue => e
+        @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
+        event.respond "This bot does not have the correct permissons to run. Kick it and try again using the following invite link. #{@invite}"
     end
-    time = convert(args)
-    if !(time.is_a? Integer)
-        return time
-    end
-    response = add_to_database(event.server.id, name, time)
-    track_one(event, name) if response == "Created Timer Successfully."
-    return response
-end
-
-@bot.command :track do |event|
-    return "You do not have access to this command." if event.user.id != 322845778127224832
-    event.respond "Bot is tracking. Please wait a moment for changes to update."
-    run()
 end
 
 @bot.command :updatetime do |event, *args|
@@ -92,12 +94,14 @@ end
     @deletetime = time - Time.now.to_i
 end
 
-@bot.command :deletetimer do |event, name|
+@bot.command :deletetimer do |event, *args|
     return "You do not have access to this bot." if permissions(event) == false
     begin
+        name = args.join(" ")
+        name = name.gsub(/_/, " ")
         channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ? AND serverID = ?", name, event.server.id)[0]["channelID"]
         begin
-        Discordrb::API::Channel.delete("#{@bot.token}", channelID)
+            Discordrb::API::Channel.delete("#{@bot.token}", channelID)
         rescue
         end
         @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
@@ -120,24 +124,29 @@ end
             # p "no"
         end
         @category_db.execute "DELETE FROM category WHERE serverID=?", event.server.id
-        category = event.server.create_channel(name = "Timer(s)", type = 4)
-        Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, event.server.id, 0, 1048576, 'role')
-        Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.profile.id, 1048576, 0, 'member')
-        category.position=(0)
-        @category_db.execute("INSERT INTO category (serverID, categoryID) VALUES (?, ?)", event.server.id, category.id)
-        @db.execute("SELECT * FROM time WHERE serverID = #{event.server.id}") do |row|
-            begin
-                Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"])
-            rescue
+        begin
+            category = event.server.create_channel(name = "Timer(s)", type = 4)
+            Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, event.server.id, 0, 1048576, 'role')
+            Discordrb::API::Channel.update_permission("#{@bot.token}", category.id, @bot.profile.id, 1048576, 0, 'member')
+            category.position=(0)
+            @category_db.execute("INSERT INTO category (serverID, categoryID) VALUES (?, ?)", event.server.id, category.id)
+            @db.execute("SELECT * FROM time WHERE serverID = #{event.server.id}") do |row|
                 begin
-                    Discordrb::API::Channel.delete("#{@bot.token}", @bot.find_channel(row["oldName"], @bot.server(row["serverID"]).name).first.id)
+                    Discordrb::API::Channel.delete("#{@bot.token}", row["channelID"])
                 rescue
+                    begin
+                        Discordrb::API::Channel.delete("#{@bot.token}", @bot.find_channel(row["oldName"], @bot.server(row["serverID"]).name).first.id)
+                    rescue
+                    end
                 end
+                track_one(event, row["timerName"])
             end
-            track_one(event, row["timerName"])
+            @busy = false
+            event.respond "Organization is turned on."
+        rescue
+            @busy = false
+            event.respond "This bot does not have the correct permissons to run. Kick it and try again using the following invite link. #{@invite}"
         end
-        @busy = false
-        event.respond "Organization is turned on."
     elsif boolean == "false"
         begin
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = ?", event.server.id)[0]["categoryID"]
@@ -178,15 +187,15 @@ def convert(args)
     return Time.now.to_i + interval
 end
 
-def readable_time(time, name)
+def readable_time(time, name, serverID)
     time -= Time.now.to_i
     if time <= (@delete_time*-1)
-        channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ?", name)[0]["channelID"]
+        channelID = @db.execute("SELECT channelID FROM time WHERE timerName = ? AND serverID = ?", name, serverID)[0]["channelID"]
         begin
             Discordrb::API::Channel.delete("#{@bot.token}", channelID)
         rescue
         end
-        @db.execute "DELETE FROM time WHERE timerName=?", name
+        @db.execute "DELETE FROM time WHERE timerName=? AND serverID=?", name, serverID
         return "delete"
     elsif time < 0
         return "Finished"
@@ -201,16 +210,16 @@ def track_one(event, name)
     @db.execute("SELECT * FROM time WHERE serverID = #{event.server.id} AND timerName = ?", name) do |row|
         if @category_db.execute("SELECT 1 FROM category WHERE serverID = #{event.server.id}").length > 0
             categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{event.server.id}")[0]["categoryID"]
-            Discordrb::API::Server.create_channel(token = @bot.token, server_id = event.server.id, name = "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0)
+            Discordrb::API::Server.create_channel(token = @bot.token, server_id = event.server.id, name = "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"], event.server.id)}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0)
         else
-            channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", type = 2)
+            channel = event.server.create_channel(name = "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"], event.server.id)}", type = 2)
             Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, @bot.profile.id, 1048576, 0, 'member')
             Discordrb::API::Channel.update_permission("#{@bot.token}", channel.id, event.server.id, 0, 1048576, 'role')
         end
         while channel == nil do 
-            channel = @bot.find_channel("#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", event.server.name).first
+            channel = @bot.find_channel("#{row["timerName"]}: #{readable_time(row["time"], row["timerName"], event.server.id)}", event.server.name).first
         end
-        @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"])}", row["timerName"], "#{row["serverID"]}".to_i)
+        @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time(row["time"], row["timerName"], event.server.id)}", row["timerName"], "#{row["serverID"]}".to_i)
     end
 end
 
@@ -230,7 +239,7 @@ def track()
             end
             if @category_db.execute("SELECT 1 FROM category WHERE serverID = #{row["serverID"]}").length > 0
                 categoryID = @category_db.execute("SELECT categoryID FROM category WHERE serverID = #{row["serverID"]}")[0]["categoryID"]
-                readable_time = readable_time(row["time"], row["timerName"])
+                readable_time = readable_time(row["time"], row["timerName"], row["serverID"])
                 if readable_time != "delete"
                     begin
                         channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = categoryID, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
@@ -246,7 +255,7 @@ def track()
                     end
                 end
             else
-                readable_time = readable_time(row["time"], row["timerName"])
+                readable_time = readable_time(row["time"], row["timerName"], row["serverID"])
                 if readable_time != "delete"
                     begin
                         channel = @bot.channel(Discordrb::API::Server.create_channel(token = @bot.token, server_id = "#{row["serverID"]}".to_i, name = "#{row["timerName"]}: #{readable_time}", type = 2, topic = "", bitrate = 64000, user_limit = 0, permission_overwrites = [], parent_id = nil, nsfw = false, rate_limit_per_user = 0, position = 0).to_s[8..25].to_i, @bot.server("#{row["serverID"]}"))
