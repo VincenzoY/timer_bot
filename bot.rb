@@ -7,10 +7,10 @@ require 'dotenv/load'
 @command = "-"
 @bot = Discordrb::Commands::CommandBot.new token: ENV['TOKEN'], prefix: "#{@command}"
 @update_time = 10
-@delete_time = 60
+@delete_time = 3600
 @embed_color = "0018a1"
 @busy = false
-@invite = "https://discord.com/oauth2/authorize?client_id=356247887820357632&permissions=268435504&scope=bot"
+@invite = "https://discord.com/api/oauth2/authorize?client_id=720125551016280165&permissions=268435504&scope=bot"
 
 # Invite url
 
@@ -30,7 +30,7 @@ end
 @bot.command :help do |event|
     event.channel.send_embed do |embed|
         embed.title = "Commands"
-        embed.description = "Make Timers for your server. There is a max of three timers per server. Timers automatically delete one hour after completing their countdown"
+        embed.description = "Make Timers for your server. There is a max of five timers per server. Timers automatically delete one hour after completing their countdown"
         embed.color = "#{@embed_color}"
         embed.thumbnail = Discordrb::Webhooks::EmbedThumbnail.new(url: @bot.profile.avatar_url)
         fields = [Discordrb::Webhooks::EmbedField.new({name: "Create a Timer", value: "#{@command}addtimer (timer name) (Some combination of (int)d (int)h (int)m (int)s)\n__The timer name must be one word but you can use underscores and they will be turned into spaces__.\nExample: #{@command}addtimer Test\_Timer 5d 4m 2s"}),
@@ -62,19 +62,23 @@ end
         return "You do not have access to this bot." if permissions(event) == false
         if name == nil
             event.respond "Please input a name"
+        elsif name.length > 50
+            event.respond "That name is too long"
         elsif args == []
             event.respond "Please input a time"
         else
             name = name.gsub(/_/, " ")
             time = convert(args)
             if !(time.is_a? Integer)
-                return time
+                event.respond time
+            else
+                response = add_to_database(event.server.id, name, time)
+                track_one(event, name) if response == "Created Timer Successfully."
+                event.respond response
             end
-            response = add_to_database(event.server.id, name, time)
-            track_one(event, name) if response == "Created Timer Successfully."
-            event.respond response
         end
     rescue => e
+        p e
         @db.execute "DELETE FROM time WHERE timerName=? AND serverID = ?", name, event.server.id
         event.respond "This bot does not have the correct permissons to run. Kick it and try again using the following invite link. #{@invite}"
     end
@@ -170,7 +174,7 @@ def convert(args)
         timetype = time[-1]
         int = time[0...-1] 
         if int.to_i.to_s != int 
-            return 'The command is invalid. Try again.'
+            return 'The command is invalid. Ensure the name is one word (read help command for more info).'
         elsif timetype == "s" 
             interval += int.to_i
         elsif timetype == "m" 
@@ -180,10 +184,10 @@ def convert(args)
         elsif timetype == "d"
             interval += int.to_i*86400
         else
-            return 'The command is invalid. Try again.'
+            return 'The command is invalid. Ensure the time is valid (some combination of {int}d int{h} int{m} int{s}).'
         end
     end
-    return "That's too long" if interval > 157788000
+    return "That's too long" if interval > 315576000
     return Time.now.to_i + interval
 end
 
@@ -266,7 +270,10 @@ def track()
                 end
             end
             if readable_time != "delete"
-                @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time}", row["timerName"], "#{row["serverID"]}".to_i)
+                begin
+                    @db.execute("UPDATE time SET channelID = ?, oldName = ? WHERE timerName = ? AND serverID = ?", channel.id, "#{row["timerName"]}: #{readable_time}", row["timerName"], "#{row["serverID"]}".to_i)
+                rescue
+                end
             end
         end
     end
@@ -301,7 +308,7 @@ end
 def add_to_database(serverID, timerName, time)
     if @db.execute("SELECT 1 FROM time WHERE timerName = ? AND serverID = #{serverID}", timerName).length > 0
         return "That is already a timer"
-    elsif @db.execute("SELECT COUNT(serverID) FROM time WHERE serverID = #{serverID}").first["COUNT(serverID)"] >= 3
+    elsif @db.execute("SELECT COUNT(serverID) FROM time WHERE serverID = #{serverID}").first["COUNT(serverID)"] >= 5
         return "You have too many timers. Delete a different one first before adding another."
     else
         @db.execute("INSERT INTO time (serverID, timerName, time) VALUES (?, ?, ?)", serverID, timerName, time)
